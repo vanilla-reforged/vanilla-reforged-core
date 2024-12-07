@@ -53,7 +53,7 @@
 #include "CharacterDatabaseCache.h"
 #include "HardcodedEvents.h"
 #include "Conditions.h"
-
+#include "RealmZone.h"
 #include <limits>
 
 INSTANTIATE_SINGLETON_1(ObjectMgr);
@@ -5348,8 +5348,8 @@ void ObjectMgr::LoadQuests()
                           "`IncompleteEmote`, `CompleteEmote`, `OfferRewardEmote1`, `OfferRewardEmote2`, `OfferRewardEmote3`, `OfferRewardEmote4`,"
     //                      119                       120                       121                       122
                           "`OfferRewardEmoteDelay1`, `OfferRewardEmoteDelay2`, `OfferRewardEmoteDelay3`, `OfferRewardEmoteDelay4`,"
-    //                      123            124               125         126             127      128                  129
-                          "`StartScript`, `CompleteScript`, `MaxLevel`, `RewMailMoney`, `RewXP`, `RequiredCondition`, `BreadcrumbForQuestId` "
+    //                      123            124               125         126             127      128                  129                     130
+                          "`StartScript`, `CompleteScript`, `MaxLevel`, `RewMailMoney`, `RewXP`, `RequiredCondition`, `BreadcrumbForQuestId`, `RewRepSpilloverMask`"
                           " FROM `quest_template` t1 WHERE `patch`=(SELECT max(`patch`) FROM `quest_template` t2 WHERE t1.`entry`=t2.`entry` && `patch` <= %u)", sWorld.GetWowPatch()));
     if (!result)
     {
@@ -5821,11 +5821,20 @@ void ObjectMgr::LoadQuests()
                     qinfo->RewRepFaction[j] = 0;            // quest will not reward this
                 }
             }
-            else if (qinfo->RewRepValue[j] != 0)
+            else
             {
-                sLog.Out(LOG_DBERROR, LOG_LVL_MINIMAL, "Quest %u has `RewRepFaction%d` = 0 but `RewRepValue%d` = %i.",
-                                qinfo->GetQuestId(), j + 1, j + 1, qinfo->RewRepValue[j]);
-                // no changes, quest ignore this data
+                if (qinfo->RewRepSpilloverMask & (1 << j))
+                {
+                    sLog.Out(LOG_DBERROR, LOG_LVL_MINIMAL, "Quest %u has `RewRepFaction%d` = 0 but `RewRepSpilloverMask` is set for this index.",
+                        qinfo->GetQuestId(), j + 1);
+                    // no changes, quest ignore this data
+                }
+                if (qinfo->RewRepValue[j] != 0)
+                {
+                    sLog.Out(LOG_DBERROR, LOG_LVL_MINIMAL, "Quest %u has `RewRepFaction%d` = 0 but `RewRepValue%d` = %i.",
+                        qinfo->GetQuestId(), j + 1, j + 1, qinfo->RewRepValue[j]);
+                    // no changes, quest ignore this data
+                }
             }
         }
 
@@ -8175,8 +8184,8 @@ void ObjectMgr::LoadCorpses()
     uint32 count = 0;
     //                                                                            0       1                       2                      3                      4                      5                       6
     std::unique_ptr<QueryResult> result(CharacterDatabase.Query("SELECT `corpse`.`guid`, `player_guid`, `corpse`.`position_x`, `corpse`.`position_y`, `corpse`.`position_z`, `corpse`.`orientation`, `corpse`.`map`, "
-    //                      7       8              9           10        11      12       13      14      15            16            17             18                 19          20
-                          "`time`, `corpse_type`, `instance`, `gender`, `race`, `class`, `skin`, `face`, `hair_style`, `hair_color`, `facial_hair`, `equipment_cache`, `guild_id`, `player_flags` FROM `corpse` "
+    //                      7       8                       9           10        11      12       13      14      15            16            17             18                 19          20
+                          "`time`, `corpse_type`, `corpse`.`instance`, `gender`, `race`, `class`, `skin`, `face`, `hair_style`, `hair_color`, `facial_hair`, `equipment_cache`, `guild_id`, `player_flags` FROM `corpse` "
                           "JOIN `characters` ON `player_guid` = `characters`.`guid` "
                           "LEFT JOIN `guild_member` ON `player_guid`=`guild_member`.`guid` WHERE `corpse_type` <> 0"));
 
@@ -10078,13 +10087,23 @@ GameTele const* ObjectMgr::GetGameTele(std::string const& name) const
     // converting string that we try to find to lower case
     wstrToLower(wname);
 
-    // Alternative first GameTele what contains wnameLow as substring in case no GameTele location found
+    // if no GameTele location is found use the shortest one which contains wnameLow as substring
     GameTele const* alt = nullptr;
+    std::wstring::size_type size = -1;
     for (const auto& itr : m_GameTeleMap)
+    {
         if (itr.second.wnameLow == wname)
             return &itr.second;
-        else if (alt == nullptr && itr.second.wnameLow.find(wname) != std::wstring::npos)
-            alt = &itr.second;
+        else if (itr.second.wnameLow.find(wname) != std::wstring::npos)
+        {
+            std::wstring::size_type newSize = itr.second.wnameLow.size();
+            if (size == -1 || newSize < size)
+            {
+                alt = &itr.second;
+                size = newSize;
+            }
+        }
+    }
 
     return alt;
 }
@@ -11591,7 +11610,7 @@ void ObjectMgr::LoadAreaTemplate()
     sAreaStorage.Load();
 
     for (auto itr = sAreaStorage.begin<AreaEntry>(); itr != sAreaStorage.end<AreaEntry>(); ++itr)
-        if (itr->IsZone() && itr->MapId != 0 && itr->MapId != 1)
+        if (itr->IsZone() && itr->MapId != MAP_EASTERN_KINGDOMS && itr->MapId != MAP_KALIMDOR)
             sAreaFlagByMapId.insert(AreaFlagByMapId::value_type(itr->MapId, itr->ExploreFlag));
 }
 
